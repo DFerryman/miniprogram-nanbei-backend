@@ -1,8 +1,10 @@
 // 小程序页面的网页版复刻，尺寸按 375pt 屏宽换算（750rpx = 375px），样式取自小程序 wxss。
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CONTACT_LABELS, type Contact, type Studio } from '../../shared/types.ts';
 import { contactVisible } from '../../shared/normalize.ts';
 import { displayUrl, useMediaUrls } from '../lib/media.ts';
+import { FixedLayer } from './Phone.tsx';
 import { coverOf, formatCount, metaLine, type PreviewPortfolio } from './model.ts';
 
 export const SCREEN_WIDTH = 375;
@@ -37,11 +39,16 @@ interface GalleryProps {
   items: PreviewPortfolio[];
   series: { id: string; title: string }[];
   highlightId?: string;
+  /** 外部指定当前筛选的系列（例如在系列管理页点选某个系列） */
+  activeSeries?: string;
   onOpen?: (id: string) => void;
 }
 
-export function GalleryPage({ items, series, highlightId, onOpen }: GalleryProps) {
-  const [active, setActive] = useState('');
+export function GalleryPage({ items, series, highlightId, activeSeries, onOpen }: GalleryProps) {
+  const [active, setActive] = useState(activeSeries || '');
+  useEffect(() => {
+    if (activeSeries !== undefined) setActive(activeSeries);
+  }, [activeSeries]);
   const colWidth = Math.floor((SCREEN_WIDTH - M_PADDING * 2 - M_GAP) / 2);
   const cols = useMemo(() => {
     const out: { p: PreviewPortfolio; h: number; src: string; color: string }[][] = [[], []];
@@ -261,6 +268,7 @@ export function AboutPage({ studio }: { studio: Studio }) {
   useMediaUrls();
   const [sheet, setSheet] = useState<Contact | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const fixedLayer = useContext(FixedLayer);
   const cover = studio.cover;
   const ratio = cover && cover.width && cover.height ? (cover.height / cover.width) * 100 : 66.67;
   const contacts = studio.contacts.filter(contactVisible).map((c) => ({
@@ -326,6 +334,8 @@ export function AboutPage({ studio }: { studio: Studio }) {
           )}
         </div>
       )}
+      {fixedLayer && createPortal(
+        <div className="mp-about-overlay">
       <div className={`mask ${sheetOpen ? 'on' : ''}`} onClick={() => setSheetOpen(false)} />
       <div className={`sheet ${sheetOpen ? 'on' : ''}`}>
         {sheet && (
@@ -346,6 +356,9 @@ export function AboutPage({ studio }: { studio: Studio }) {
           </>
         )}
       </div>
+        </div>,
+        fixedLayer,
+      )}
     </div>
   );
 }

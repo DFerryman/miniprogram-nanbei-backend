@@ -157,10 +157,23 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
-.mp-body {
+.mp-viewport {
   position: relative;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+.mp-fixed {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.mp-body {
+  position: relative;
+  height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
@@ -787,7 +800,7 @@
   margin: 3px 0 0 8px;
 }
 
-.mp-about .mask {
+.mp-about-overlay .mask {
   position: absolute;
   inset: 0;
   z-index: 100;
@@ -797,13 +810,13 @@
   transition: opacity 0.2s ease;
 }
 
-.mp-about .mask.on {
+.mp-about-overlay .mask.on {
   opacity: 1;
   pointer-events: auto;
 }
 
 /* 预览中面板固定在手机屏幕底部 */
-.mp-about .sheet {
+.mp-about-overlay .sheet {
   position: absolute;
   left: 0;
   right: 0;
@@ -818,39 +831,40 @@
   transition: transform 0.25s ease;
 }
 
-.mp-about .sheet.on {
+.mp-about-overlay .sheet.on {
   transform: translateY(0);
+  pointer-events: auto;
 }
 
-.mp-about .sheet-title {
+.mp-about-overlay .sheet-title {
   font-size: 15px;
   font-weight: 600;
 }
 
-.mp-about .qrcode {
+.mp-about-overlay .qrcode {
   width: 180px;
   height: 180px;
   margin-top: 16px;
 }
 
-.mp-about .hint {
+.mp-about-overlay .hint {
   margin-top: 6px;
   font-size: 11px;
   color: #999999;
 }
 
-.mp-about .value {
+.mp-about-overlay .value {
   margin-top: 12px;
   font-size: 15px;
   letter-spacing: 0.5px;
 }
 
-.mp-about .sheet-btns {
+.mp-about-overlay .sheet-btns {
   width: 100%;
   margin-top: 20px;
 }
 
-.mp-about .btn {
+.mp-about-overlay .btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -863,12 +877,12 @@
   cursor: pointer;
 }
 
-.mp-about .btn.ghost {
+.mp-about-overlay .btn.ghost {
   color: #111111;
   background: transparent;
   border: 1px solid #111111;
 }
 
-.mp-about .btn + .btn {
+.mp-about-overlay .btn + .btn {
   margin-top: 10px;
 }

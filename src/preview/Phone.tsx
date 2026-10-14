@@ -1,4 +1,7 @@
-import type { ReactNode } from 'react';
+import { createContext, useState, type ReactNode } from 'react';
+
+/** 手机屏幕中导航栏与 tabBar 之间的固定图层，相当于小程序页面里 position: fixed 的参照区域。 */
+export const FixedLayer = createContext<HTMLElement | null>(null);
 
 export type Tab = 'gallery' | 'discover' | 'about' | 'mine';
 
@@ -23,6 +26,7 @@ interface Props {
 /** 375pt 宽的手机外框，模拟微信小程序的状态栏、导航栏（含右上角胶囊）和文字 tabBar。 */
 export function Phone({ title = '', navigation = 'default', tab = null, dark, onTab, onBack, children }: Props) {
   const custom = navigation === 'custom';
+  const [layer, setLayer] = useState<HTMLDivElement | null>(null);
   return (
     <div className={`phone ${dark ? 'dark' : ''}`}>
       <div className="phone-screen">
@@ -49,7 +53,13 @@ export function Phone({ title = '', navigation = 'default', tab = null, dark, on
           <i />
           <span className="ring" />
         </div>
-        <div className={`mp-body ${custom ? 'full' : ''}`}>{children}</div>
+        <div className="mp-viewport">
+          <div className={`mp-body ${custom ? 'full' : ''}`}>
+            <FixedLayer.Provider value={layer}>{children}</FixedLayer.Provider>
+          </div>
+          {/* 弹出层渲染到这里，不随页面滚动，也不占用页面内容的位置 */}
+          <div className="mp-fixed" ref={setLayer} />
+        </div>
         {tab && (
           <div className="mp-tabbar">
             {TABS.map((t) => (

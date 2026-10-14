@@ -820,42 +820,6 @@ input:disabled {
   color: var(--accent-text);
 }
 
-/* 表格 */
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--surface);
-}
-
-.table th,
-.table td {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  vertical-align: top;
-}
-
-.table th {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
-}
-
-.row-actions {
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
-}
-
-@media (max-width: 640px) {
-  .table th:nth-child(2),
-  .table td:nth-child(2),
-  .table th:nth-child(4),
-  .table td:nth-child(4) {
-    display: none;
-  }
-}
-
 /* 弹窗 */
 .modal-mask {
   position: fixed;
@@ -880,4 +844,234 @@ input:disabled {
 
 .modal p {
   margin: 0;
+}
+
+/* 系列管理 */
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.series-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.series-card {
+  display: grid;
+  grid-template-columns: 28px 168px minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+  padding: 16px 20px 16px 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.series-card:hover {
+  border-color: var(--muted);
+}
+
+.series-card.on {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.series-card.off .mosaic,
+.series-card.off .series-name h3 {
+  opacity: 0.55;
+}
+
+.series-rank {
+  align-self: start;
+  padding-top: 2px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+
+.mosaic {
+  display: grid;
+  gap: 2px;
+  width: 168px;
+  height: 112px;
+  overflow: hidden;
+  background: var(--placeholder);
+}
+
+.mosaic.n2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.mosaic.n3 {
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.mosaic.n3 .mosaic-cell:first-child {
+  grid-row: span 2;
+}
+
+.mosaic.empty {
+  display: flex;
+  padding: 0 6px;
+  text-align: center;
+  white-space: nowrap;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  background: transparent;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mosaic-cell {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mosaic-cell img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.series-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.series-name {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.series-name h3 {
+  overflow: hidden;
+  font-size: 17px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.series-desc {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.series-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin: 4px 0 0;
+}
+
+.series-meta div {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.series-meta dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.series-meta dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.series-meta dd small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.series-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-self: center;
+}
+
+.series-actions .btn {
+  min-width: 72px;
+}
+
+@media (max-width: 760px) {
+  .series-card {
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 14px;
+    padding: 14px;
+  }
+
+  .series-rank {
+    display: none;
+  }
+
+  .mosaic {
+    width: 96px;
+    height: 96px;
+  }
+
+  .mosaic.n3 {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  .mosaic.n3 .mosaic-cell:not(:first-child),
+  .mosaic.n2 .mosaic-cell:not(:first-child) {
+    display: none;
+  }
+
+  .mosaic.n2 {
+    grid-template-columns: 1fr;
+  }
+
+  .series-actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.series-modal {
+  max-width: 480px;
+  gap: 16px;
+}
+
+.seg-control.full {
+  display: flex;
+}
+
+.seg-control.full button {
+  flex: 1;
+}
+
+.seg-control button + button {
+  border-left: 1px solid var(--border);
 }
