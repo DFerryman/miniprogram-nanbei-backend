@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nanbei-admin",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": { "enabled": true }
+  // 可选配置（均不写入仓库，通过 Cloudflare 控制台或 wrangler 设置）：
+  //   ADMIN_TOKEN        secret，设置后进入后台需要输入该访问口令：npx wrangler secret put ADMIN_TOKEN
+  //   ALLOWED_API_HOSTS  var，允许转发的 API 主机名白名单（逗号分隔），未设置时允许任意 https 主机
+}

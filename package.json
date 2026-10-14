@@ -1,0 +1,29 @@
+{
+  "name": "nanbei-admin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:worker": "npm run build && wrangler dev",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "test": "node --test --experimental-strip-types worker/*.test.ts",
+    "deploy": "npm run build && wrangler deploy",
+    "mock": "node scripts/mock-wechat.mjs 8790"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261014.1",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4",
+    "wrangler": "^4.151.0"
+  }
+}

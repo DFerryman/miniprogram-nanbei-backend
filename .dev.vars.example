@@ -1,0 +1,5 @@
+# 复制为 .dev.vars 供 `wrangler dev` 本地使用（.dev.vars 不提交）。
+# 允许把接口地址设为 http://127.0.0.1:8790（scripts/mock-wechat.mjs 模拟服务），线上不要设置。
+ALLOW_INSECURE_LOCALHOST=1
+# 可选：后台访问口令
+# ADMIN_TOKEN=change-me
