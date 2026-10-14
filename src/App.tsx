@@ -41,7 +41,7 @@ export function App() {
   return (
     <DataProvider profileId={profile.id}>
       <header className="topbar">
-        <div className="brand">南北摄影 · 内容管理</div>
+        <div className="brand">摄影工作室 · 内容管理</div>
         <nav>
           {NAV.map((n) => (
             <a key={n.path} href={`#/${n.path}`} className={section === n.path ? 'on' : ''}>{n.text}</a>

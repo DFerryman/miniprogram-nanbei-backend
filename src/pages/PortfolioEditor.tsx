@@ -507,7 +507,7 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
           </Phone>
         )}
         {tab === 'gallery' && (
-          <Phone title="南北摄影" tab="gallery" onTab={(t) => t === 'discover' && setTab('feed')}>
+          <Phone title="摄影工作室" tab="gallery" onTab={(t) => t === 'discover' && setTab('feed')}>
             <GalleryPage items={galleryItems} series={publishedSeries} highlightId={id} onOpen={(oid) => oid === id && setTab('album')} />
           </Phone>
         )}

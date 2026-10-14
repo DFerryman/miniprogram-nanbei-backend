@@ -153,7 +153,7 @@ export function Portfolios() {
           </Phone>
         ) : (
           <Phone
-            title="南北摄影"
+            title="摄影工作室"
             navigation={tab === 'discover' ? 'custom' : 'default'}
             tab={tab}
             dark={tab === 'discover'}

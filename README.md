@@ -1,6 +1,6 @@
-# 南北摄影 · 内容管理后台
+# 摄影工作室 · 内容管理后台
 
-南北摄影工作室小程序（[DFerryman/miniprogram-nanbei](https://github.com/DFerryman/miniprogram-nanbei)）的网页管理后台，部署在 **Cloudflare Workers** 上。它直接读写小程序所用的微信云开发（CloudBase）环境：
+摄影工作室小程序（[配套小程序仓库](https://github.com/DFerryman/miniprogram-nanbei)）的网页管理后台，部署在 **Cloudflare Workers** 上。它直接读写小程序所用的微信云开发（CloudBase）环境：
 
 - **作品**：浏览当前环境的全部作品；新建作品并上传图片、视频；编辑标题、说明、拍摄日期、地点、系列、标签、排序权重和发布状态；调整媒体顺序、指定封面；删除作品，可同时清理云存储文件。
 - **系列**：新建、编辑、删除作品系列（小程序「作品」页顶部的筛选栏）。

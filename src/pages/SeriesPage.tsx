@@ -181,7 +181,7 @@ export function SeriesPage() {
           <strong>筛选栏预览</strong>
           <span className="muted small">点选左侧系列，查看小程序中筛选后的作品</span>
         </div>
-        <Phone title="南北摄影" tab="gallery">
+        <Phone title="摄影工作室" tab="gallery">
           <GalleryPage items={published} series={barSeries} activeSeries={barSeries.some((b) => b.id === selected) ? selected : ''} />
         </Phone>
       </aside>
