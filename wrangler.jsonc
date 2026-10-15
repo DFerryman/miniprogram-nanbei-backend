@@ -3,6 +3,7 @@
   "name": "nanbei-admin",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "photodesk.win", "custom_domain": true }],
@@ -11,8 +12,24 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
   },
-  "observability": { "enabled": true }
-  // 可选配置（均不写入仓库，通过 Cloudflare 控制台或 wrangler 设置）：
-  //   ADMIN_TOKEN        secret，设置后进入后台需要输入该访问口令：npx wrangler secret put ADMIN_TOKEN
-  //   ALLOWED_API_HOSTS  var，允许转发的 API 主机名白名单（逗号分隔），未设置时允许任意 https 主机
+  "vars": {
+    "WECHAT_APP_ID": "wx7f54ff074d26489f",
+    "CLOUDBASE_ENV_ID": "cloud1-d4gbua7848fbcecf0",
+    "WECHAT_API_BASE": "https://api.weixin.qq.com",
+    "ALLOWED_API_HOSTS": "api.weixin.qq.com",
+    "ADMIN_EMAIL": "sanchai20@163.com",
+    "EMAIL_FROM": "no-reply@auth.photodesk.win",
+    "APP_ORIGIN": "https://photodesk.win"
+  },
+  "d1_databases": [{
+    "binding": "AUTH_DB",
+    "database_name": "nanbei-admin-auth",
+    "database_id": "537a6497-cfda-478b-97e1-e4ae5152600f",
+    "migrations_dir": "migrations"
+  }],
+  "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["no-reply@auth.photodesk.win"] }],
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+  // Secrets 通过控制台或 wrangler secret put 设置，不写入仓库：
+  // WECHAT_APP_SECRET：小程序 AppSecret（部署者自行配置）
+  // AUTH_SECRET：至少 32 字符的随机验证码 HMAC 密钥
 }

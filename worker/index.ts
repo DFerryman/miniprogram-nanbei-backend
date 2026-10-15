@@ -1,14 +1,18 @@
 // Cloudflare Worker：静态页面由 assets 提供，/api/* 由这里处理。
-// 连接配置（接口地址、环境 ID、AppID、AppSecret）由浏览器随请求头发送，Worker 只做转发与校验，不保存任何配置。
+// 云开发凭据仅从服务端绑定读取，所有业务接口均要求已授权的邮箱会话。
 import * as N from '../shared/normalize.ts';
 import type { CloudConfig } from '../shared/types.ts';
 import * as Q from './query.ts';
 import { AppError, WxCloud } from './wechat.ts';
 
-export interface Env {
-  ADMIN_TOKEN?: string;
-  ALLOWED_API_HOSTS?: string;
-  /** 仅本地联调：设为 "1" 时允许 http://localhost 接口地址（在 .dev.vars 中设置，勿在线上开启） */
+import { handleAuth, requireUser } from './auth.ts';
+import { parseConfig } from './config.ts';
+export { parseConfig } from './config.ts';
+
+export interface Env extends Omit<CloudflareBindings, 'ALLOW_INSECURE_LOCALHOST'> {
+  WECHAT_APP_SECRET?: string;
+  AUTH_SECRET?: string;
+  /** 仅供本地 mock 联调，线上不要启用。 */
   ALLOW_INSECURE_LOCALHOST?: string;
 }
 
@@ -31,53 +35,6 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   });
-}
-
-function decodeBase64Utf8(s: string): string {
-  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
-  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
-}
-
-export function parseConfig(header: string | null, env: Env): CloudConfig {
-  if (!header) throw new AppError('NO_CONFIG', '缺少连接配置，请先完成环境设置', 401);
-  let raw: Record<string, unknown>;
-  try {
-    raw = JSON.parse(decodeBase64Utf8(header));
-  } catch {
-    throw new AppError('BAD_CONFIG', '连接配置格式错误', 400);
-  }
-  const cfg: CloudConfig = {
-    apiBase: N.text(raw.apiBase, 300).replace(/\/+$/, ''),
-    envId: N.text(raw.envId, 100),
-    appId: N.text(raw.appId, 64),
-    appSecret: N.text(raw.appSecret, 128),
-  };
-  let api: URL;
-  try {
-    api = new URL(cfg.apiBase);
-  } catch {
-    throw new AppError('BAD_CONFIG', '接口地址无效', 400);
-  }
-  const localDev = env.ALLOW_INSECURE_LOCALHOST === '1' && api.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(api.hostname);
-  if ((api.protocol !== 'https:' && !localDev) || api.search || api.hash || api.username || api.password) {
-    throw new AppError('BAD_CONFIG', '接口地址必须是 https 地址，且不能包含查询参数或账号信息', 400);
-  }
-  const allowed = (env.ALLOWED_API_HOSTS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-  if (allowed.length && !allowed.includes(api.hostname.toLowerCase())) {
-    throw new AppError('HOST_NOT_ALLOWED', `接口主机 ${api.hostname} 不在 Worker 的 ALLOWED_API_HOSTS 白名单中`, 403);
-  }
-  if (!/^[A-Za-z0-9_-]{1,100}$/.test(cfg.envId)) throw new AppError('BAD_CONFIG', '云开发环境 ID 格式不正确', 400);
-  if (!/^wx[0-9a-f]{16}$/i.test(cfg.appId)) throw new AppError('BAD_CONFIG', 'AppID 格式不正确（应为 wx 开头的 18 位）', 400);
-  if (!/^[A-Za-z0-9]{16,64}$/.test(cfg.appSecret)) throw new AppError('BAD_CONFIG', 'AppSecret 格式不正确', 400);
-  return cfg;
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diff = x.length ^ y.length;
-  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diff === 0;
 }
 
 async function body(req: Request): Promise<Record<string, unknown>> {
@@ -317,22 +274,22 @@ const routes: [string, RegExp, Handler][] = [
 
 async function handle(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
-  if (url.pathname === '/api/meta') return json({ ok: true, data: { requiresAdminToken: !!env.ADMIN_TOKEN } });
+  if (url.pathname === '/api/meta' && req.method === 'GET') return json({ ok: true, data: { authRequired: true } });
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {
-    // 仅接受同源请求，防止其他网站借用已保存配置的浏览器发起写操作
+    // 防止其他网站借用已登录浏览器发起写操作。
     const origin = req.headers.get('origin');
     if (origin && origin !== url.origin) throw new AppError('BAD_ORIGIN', '不允许跨站请求', 403);
   }
-  if (env.ADMIN_TOKEN && !timingSafeEqual(req.headers.get('x-admin-token') || '', env.ADMIN_TOKEN)) {
-    throw new AppError('UNAUTHORIZED', '访问口令不正确', 401);
-  }
+  const authResponse = await handleAuth(req, env);
+  if (authResponse) return authResponse;
+  await requireUser(req, env);
 
   for (const [method, pattern, handler] of routes) {
     if (method !== req.method) continue;
     const m = url.pathname.match(pattern);
     if (!m) continue;
-    const cloud = new WxCloud(parseConfig(req.headers.get('x-cloudbase-config'), env));
+    const cloud = new WxCloud(parseConfig(env));
     return json({ ok: true, data: await handler({ cloud, req, url, params: m.slice(1) }) });
   }
   throw new AppError('NOT_FOUND', '接口不存在', 404);
@@ -345,7 +302,7 @@ export default {
     } catch (err) {
       if (err instanceof AppError) return json({ ok: false, code: err.code, message: err.message }, err.status);
       console.error('unhandled', err);
-      return json({ ok: false, code: 'INTERNAL', message: (err as Error).message || '服务器错误' }, 500);
+      return json({ ok: false, code: 'INTERNAL', message: '服务器错误，请稍后重试' }, 500);
     }
   },
 } satisfies ExportedHandler<Env>;

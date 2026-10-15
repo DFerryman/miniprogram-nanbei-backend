@@ -113,7 +113,7 @@ export interface Studio {
   updatedAt?: string;
 }
 
-/** 浏览器保存的连接配置，每次请求随请求头发给 Worker，Worker 不落盘。 */
+/** 仅供 Worker 内部使用的连接配置，凭据从服务端环境变量读取。 */
 export interface CloudConfig {
   apiBase: string; // 微信开放接口地址，或部署在固定 IP 上的转发地址
   envId: string; // 云开发环境 ID

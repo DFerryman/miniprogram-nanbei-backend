@@ -1,5 +1,10 @@
 import type { ApiResult, Portfolio, PortfolioInput, Series, SeriesInput, Studio } from '../../shared/types.ts';
-import { activeProfile, encodeConfig, type Profile } from './config.ts';
+
+export const AUTH_REQUIRED_EVENT = 'nanbei-admin:auth-required';
+
+export interface AuthUser {
+  email: string;
+}
 
 export class ApiError extends Error {
   code: string;
@@ -11,16 +16,12 @@ export class ApiError extends Error {
   }
 }
 
-export function headersFor(profile: Profile | null): Record<string, string> {
-  const h: Record<string, string> = {};
-  if (profile) {
-    h['x-cloudbase-config'] = encodeConfig(profile.config);
-    if (profile.adminToken) h['x-admin-token'] = profile.adminToken;
-  }
-  return h;
+export function notifyUnauthorized(status: number) {
+  if (status === 401) window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
 }
 
 async function parse<T>(res: Response): Promise<T> {
+  notifyUnauthorized(res.status);
   let json: ApiResult<T>;
   try {
     json = await res.json();
@@ -31,12 +32,12 @@ async function parse<T>(res: Response): Promise<T> {
   return json.data;
 }
 
-export async function request<T>(method: string, path: string, body?: unknown, profile = activeProfile()): Promise<T> {
-  const headers = headersFor(profile);
+export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
   if (body !== undefined) headers['content-type'] = 'application/json';
   let res: Response;
   try {
-    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await fetch(path, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body) });
   } catch (err) {
     throw new ApiError('NETWORK', `网络错误：${(err as Error).message}`, 0);
   }
@@ -50,8 +51,13 @@ export interface VerifyResult {
 }
 
 export const api = {
-  meta: () => request<{ requiresAdminToken: boolean }>('GET', '/api/meta', undefined, null),
-  verify: (profile: Profile) => request<VerifyResult>('POST', '/api/verify', {}, profile),
+  meta: () => request<{ authRequired: true }>('GET', '/api/meta'),
+  session: () => request<{ user: AuthUser | null }>('GET', '/api/auth/session'),
+  requestAccess: (email: string) => request<{ message: string }>('POST', '/api/auth/request-access', { email }),
+  sendCode: (email: string) => request<{ message: string }>('POST', '/api/auth/send-code', { email }),
+  verifyCode: (email: string, code: string) => request<{ user: AuthUser }>('POST', '/api/auth/verify-code', { email, code }),
+  logout: () => request<{ message: string }>('POST', '/api/auth/logout'),
+  verify: () => request<VerifyResult>('POST', '/api/verify'),
 
   portfolios: () => request<{ items: Portfolio[] }>('GET', '/api/portfolios'),
   portfolio: (id: string) => request<{ item: Portfolio }>('GET', `/api/portfolios/${encodeURIComponent(id)}`),

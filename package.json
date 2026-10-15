@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:worker": "npm run build && wrangler dev",
+    "dev:worker": "npm run build && wrangler dev --local-upstream localhost:8787 --upstream-protocol http",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "node --test --experimental-strip-types worker/*.test.ts",

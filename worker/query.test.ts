@@ -55,10 +55,18 @@ test('工作室信息整理', () => {
   assert.equal(s.contacts[0].type, 'link');
 });
 
-test('连接配置校验', () => {
-  const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64');
-  const good = { apiBase: 'https://api.example.com/', envId: 'env-1', appId: 'wx0123456789abcdef', appSecret: '0123456789abcdef0123456789abcdef' };
-  assert.equal(parseConfig(enc(good), {}).apiBase, 'https://api.example.com');
-  assert.throws(() => parseConfig(enc({ ...good, apiBase: 'http://x.com' }), {}));
-  assert.throws(() => parseConfig(enc(good), { ALLOWED_API_HOSTS: 'api.weixin.qq.com' }));
+test('连接配置只读取服务端环境变量，并校验白名单', () => {
+  const good = {
+    WECHAT_API_BASE: 'https://api.weixin.qq.com/',
+    CLOUDBASE_ENV_ID: 'cloud1-d4gbua7848fbcecf0',
+    WECHAT_APP_ID: 'wx7f54ff074d26489f',
+    WECHAT_APP_SECRET: '0123456789abcdef0123456789abcdef',
+  };
+  assert.equal(parseConfig(good).apiBase, 'https://api.weixin.qq.com');
+  assert.equal(parseConfig(good).envId, 'cloud1-d4gbua7848fbcecf0');
+  assert.throws(() => parseConfig({ ...good, WECHAT_API_BASE: 'http://x.com' }));
+  assert.throws(() => parseConfig({ ...good, WECHAT_API_BASE: 'https://evil.com' }));
+  assert.throws(() => parseConfig({ ...good, WECHAT_APP_SECRET: '' }));
+  assert.throws(() => parseConfig({ ...good, WECHAT_API_BASE: 'https://api.weixin.qq.com?token=x' }));
+  assert.equal(parseConfig({ ...good, WECHAT_API_BASE: 'http://127.0.0.1:8790', ALLOWED_API_HOSTS: '127.0.0.1', ALLOW_INSECURE_LOCALHOST: '1' }).apiBase, 'http://127.0.0.1:8790');
 });

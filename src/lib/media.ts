@@ -1,8 +1,8 @@
 // 媒体工具：cloud:// 文件 ID 换临时链接（批量 + 缓存）、读取宽高 / 时长、生成缩略图与视频封面、上传。
 import { useSyncExternalStore } from 'react';
 import type { MediaItem } from '../../shared/types.ts';
-import { api, ApiError, headersFor } from './api.ts';
-import { activeProfile } from './config.ts';
+import { api, ApiError, notifyUnauthorized } from './api.ts';
+import { getUploadMode } from './config.ts';
 
 // ---------- 临时链接 ----------
 
@@ -13,6 +13,7 @@ const pending = new Set<string>();
 const failed = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 let version = 0;
+let cacheEpoch = 0;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -23,17 +24,19 @@ function emit() {
 function flush() {
   timer = null;
   const ids = [...pending];
+  const epoch = cacheEpoch;
   pending.clear();
   if (!ids.length) return;
   api.tempUrls(ids)
     .then(({ urls }) => {
+      if (epoch !== cacheEpoch) return;
       const expires = Date.now() + URL_TTL;
       ids.forEach((id) => {
         if (urls[id]) resolved.set(id, { url: urls[id], expires });
         else failed.add(id);
       });
     })
-    .catch(() => ids.forEach((id) => failed.add(id)))
+    .catch(() => { if (epoch === cacheEpoch) ids.forEach((id) => failed.add(id)); })
     .finally(emit);
 }
 
@@ -58,8 +61,15 @@ export function rememberLocal(fileId: string, blobUrl: string) {
 }
 
 export function clearUrlCache() {
+  cacheEpoch += 1;
+  if (timer) clearTimeout(timer);
+  timer = null;
+  pending.clear();
   resolved.clear();
   failed.clear();
+  local.forEach((url) => URL.revokeObjectURL(url));
+  local.clear();
+  knownColors.clear();
   emit();
 }
 
@@ -192,11 +202,11 @@ export function uniqueBase(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-function xhr(url: string, form: FormData, headers: Record<string, string>, onProgress?: (p: number) => void): Promise<XMLHttpRequest> {
+function xhr(url: string, form: FormData, onProgress?: (p: number) => void): Promise<XMLHttpRequest> {
   return new Promise((resolve, reject) => {
     const req = new XMLHttpRequest();
     req.open('POST', url);
-    Object.entries(headers).forEach(([k, v]) => req.setRequestHeader(k, v));
+    // 同源上传自动携带 HttpOnly 会话 Cookie；云存储直传不携带本站凭据。
     req.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
     };
@@ -208,15 +218,14 @@ function xhr(url: string, form: FormData, headers: Record<string, string>, onPro
 
 /** 上传到云存储，返回 cloud:// 文件 ID。path 形如 portfolios/<作品ID>/<文件名>。 */
 export async function upload(path: string, file: Blob, onProgress?: (p: number) => void): Promise<string> {
-  const profile = activeProfile();
   const name = path.split('/').pop() || 'file';
   let fileId: string;
-  if (profile?.uploadMode === 'direct') {
+  if (getUploadMode() === 'direct') {
     const ticket = await api.uploadTicket(path);
     const form = new FormData();
     Object.entries(ticket.fields).forEach(([k, v]) => form.append(k, v));
     form.append('file', file, name);
-    const res = await xhr(ticket.url, form, {}, onProgress);
+    const res = await xhr(ticket.url, form, onProgress);
     if (res.status < 200 || res.status >= 300) {
       throw new ApiError('UPLOAD_FAILED', `上传到云存储失败（HTTP ${res.status}）`, res.status);
     }
@@ -225,7 +234,8 @@ export async function upload(path: string, file: Blob, onProgress?: (p: number) 
     const form = new FormData();
     form.append('path', path);
     form.append('file', file, name);
-    const res = await xhr('/api/files/upload', form, headersFor(profile), onProgress);
+    const res = await xhr('/api/files/upload', form, onProgress);
+    notifyUnauthorized(res.status);
     let json: { ok: boolean; data?: { fileId: string }; code?: string; message?: string };
     try {
       json = JSON.parse(res.responseText);

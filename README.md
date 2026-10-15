@@ -13,10 +13,10 @@
 
 ```text
 浏览器（React 单页应用）
-  │  连接配置保存在本浏览器，随请求头 X-CloudBase-Config 发送
+  │  邮箱申请 → 管理员邮件审批 → 邮箱验证码登录（HttpOnly Cookie）
   ▼
 Cloudflare Worker（/api/*，worker/index.ts）
-  │  校验输入 → 生成数据库语句 → 调用微信服务端 API
+  │  D1 校验会话与授权 → 读取服务端环境变量 → 调用微信服务端 API
   ▼
 微信云开发 HTTP API（api.weixin.qq.com/tcb/*）
   ├─ 云数据库：portfolios / series / studio
@@ -24,7 +24,9 @@ Cloudflare Worker（/api/*，worker/index.ts）
 ```
 
 - 静态页面由 Workers Static Assets 提供，`/api/*` 由 Worker 处理。
-- **Worker 不保存任何配置或数据**。环境 ID、AppID、AppSecret 都在设置页填写，存在浏览器中。勾选「记住」时存入 localStorage，否则只存 sessionStorage，关闭标签页即清除。可以保存多个环境并随时切换。
+- **连接配置保存在 Cloudflare**：AppID 与环境 ID 使用 Worker 环境变量，AppSecret 使用 Secret。浏览器不再输入、保存或发送云开发凭据；首次加载会清除旧版本保存的配置。
+- **邮箱授权**：用户填写邮箱申请权限，管理员收到带 Approve / Reject 按钮的邮件。按钮先打开确认页，确认后才改变权限，防止邮件扫描器误授权。批准后，同一邮箱可获取 6 位登录码。管理员邮箱可直接获取登录码。
+- **认证数据保存在独立 D1 数据库**：包括授权状态、审批链接哈希、验证码 HMAC、会话哈希及限流记录。登录凭据使用 Secure、HttpOnly Cookie，所有业务接口都在服务端检查授权。
 - 小程序的 `stats`（点赞 / 收藏 / 分享计数）由 `user` 云函数维护，后台更新作品时不写这个字段，避免覆盖并发产生的计数。
 
 ## 云开发接口调研
@@ -69,8 +71,8 @@ Cloudflare Worker（/api/*，worker/index.ts）
 2. 在微信公众平台「开发管理 → 开发设置」获取 **AppSecret**。
 3. **IP 白名单**：调用 `stable_token` 时，若小程序后台开启了「IP 白名单」，请求必须来自白名单中的 IP。Cloudflare Workers 的出口 IP 不固定，所以需要：
    - 关闭 IP 白名单；或
-   - 在固定 IP 的服务器上部署一个转发服务（原样转发 `/cgi-bin/*` 与 `/tcb/*` 到 `https://api.weixin.qq.com`），并在设置页把「接口地址」填为该服务地址。
-4. 首次打开后台会进入设置页，填写接口地址、环境 ID、AppID、AppSecret，测试连接成功后进入后台。右上角可随时切换或修改环境。
+   - 在固定 IP 的服务器上部署一个转发服务（原样转发 `/cgi-bin/*` 与 `/tcb/*` 到 `https://api.weixin.qq.com`），并由部署者设置 Worker 的 `WECHAT_API_BASE` 与 `ALLOWED_API_HOSTS`。
+4. 由部署者在 Cloudflare 配置下述变量与 Secret。用户打开后台只需使用已授权邮箱登录；登录后「设置」可测试连接和选择上传方式。
 
 ## 开发
 
@@ -80,38 +82,75 @@ npm run build         # 类型检查 + 构建前端到 dist/
 npm test              # Worker 单元测试（语句生成、输入校验）
 ```
 
-本地联调（不连接真实环境）：
+本地联调（不连接真实微信环境）：
 
 ```bash
-cp .dev.vars.example .dev.vars                      # 允许 http://127.0.0.1 接口地址
-npm run mock -- ../miniprogram-nanbei/database/seed # 模拟微信云开发 API，可导入小程序仓库的示例数据
-npm run build && npx wrangler dev                   # http://127.0.0.1:8787
-# 设置页接口地址填 http://127.0.0.1:8790，AppID 与 AppSecret 填任意格式正确的值
+cp .dev.vars.example .dev.vars
+npm run mock -- ../miniprogram-nanbei/database/seed
+npx wrangler d1 migrations apply AUTH_DB --local
+npm run dev:worker  # http://localhost:8787
 ```
 
-`scripts/mock-wechat.mjs` 在沙箱中按 JS 语法执行 Worker 生成的数据库语句，并用内存保存上传的文件，可以检查完整的读写与上传流程。修改前端时可以另开终端运行 `npm run dev`（Vite 热更新，`/api` 代理到 8787 端口）。
+使用 Vite 时，将 `.dev.vars` 中 `APP_ORIGIN` 设为实际浏览器地址（例如 `http://localhost:5173`），同时启动 Worker 时加 `--local-upstream localhost:5173 --upstream-protocol http`，以覆盖自定义域名的本地请求地址重写。代理会保留 Host 和 Origin。本地邮件绑定不会投递真实邮件。不要为方便调试加入认证绕过；认证自动化测试会使用真实 SQLite 执行与 D1 相同的 SQL，并捕获模拟邮件验证完整流程。修改前端可运行 `npm run dev`，Vite 的 `/api` 代理到 8787 端口。审批链接和 Secure Cookie 的完整浏览器联调应使用 HTTPS、与 `APP_ORIGIN` 相同的站点。
 
 ## 部署到 Cloudflare Workers
 
+项目部署于 <https://photodesk.win>，Worker 名称为 `nanbei-admin`。
+
 ```bash
-npx wrangler login
-npm run deploy        # 构建并发布，配置见 wrangler.jsonc
+# 配置你自己的小程序 AppSecret（交互输入，不要写进仓库）：
+npx wrangler secret put WECHAT_APP_SECRET
+# 初次安装时生成至少 32 字符的随机 AUTH_SECRET，并通过交互输入：
+npx wrangler secret put AUTH_SECRET
+npx wrangler d1 migrations apply AUTH_DB --remote
+npm run deploy
 ```
 
-可选的 Worker 设置（都不写进仓库）：
+本次配置的普通变量已写入 `wrangler.jsonc`，部署时同步到 Cloudflare：
 
-| 名称 | 类型 | 作用 |
-| --- | --- | --- |
-| `ADMIN_TOKEN` | Secret（`npx wrangler secret put ADMIN_TOKEN`） | 设置后，所有 `/api` 请求都要带相同的访问口令（在设置页填写）。**强烈建议设置**，否则任何知道网址的人都可以把这个 Worker 当作转发服务使用（但仍需要自己的 AppSecret） |
-| `ALLOWED_API_HOSTS` | 变量 | 限制可转发的接口主机名，逗号分隔，例如 `api.weixin.qq.com`。未设置时允许任意 https 地址 |
+| 名称 | 配置值 / 用途 |
+| --- | --- |
+| `WECHAT_APP_ID` | `wx7f54ff074d26489f` |
+| `CLOUDBASE_ENV_ID` | `cloud1-d4gbua7848fbcecf0` |
+| `WECHAT_API_BASE` | `https://api.weixin.qq.com`，可改为固定 IP 转发服务 |
+| `ALLOWED_API_HOSTS` | `api.weixin.qq.com`；使用转发服务时同步更改白名单 |
+| `ADMIN_EMAIL` | `sanchai20@163.com`，审批邮件收件人；此邮箱可直接获取登录码 |
+| `EMAIL_FROM` | `no-reply@auth.photodesk.win` |
+| `APP_ORIGIN` | `https://photodesk.win`，审批链接与请求来源的可信站点 |
 
-也建议使用 Cloudflare Access 等方式，把后台域名限制为工作室成员访问。
+必须使用 **Secret** 的字段：
+
+| 名称 | 用途 |
+| --- | --- |
+| `WECHAT_APP_SECRET` | 由部署者自行在 Cloudflare「Workers & Pages → nanbei-admin → Settings → Variables and Secrets → Add → Secret」填写小程序 AppSecret |
+| `AUTH_SECRET` | 随机密钥，用于验证码 HMAC；不要使用 AppSecret 充当此密钥 |
+
+资源绑定：`AUTH_DB` 指向独立的 `nanbei-admin-auth` D1 数据库；`EMAIL` 是 Cloudflare Email Service 的 `send_email` 绑定。发信域名 `auth.photodesk.win` 需已开通 Email Sending，SPF、DKIM、DMARC 状态需正常。向任意已授权邮箱发送验证码需要账号具备 Email Sending 权限及额度。发信域名配置见 [Cloudflare 官方文档](https://developers.cloudflare.com/email-service/get-started/send-emails/)。
+
+### 如何授权
+
+1. 对方打开网站，选择「申请访问权限」，填写邮箱并提交。
+2. 你在 `sanchai20@163.com` 收到申请邮件。点击 **Approve** 或 **Reject**，在打开的页面确认。仅查看邮件或打开链接不会改变权限。
+3. 批准后，对方使用相同邮箱点击发送登录码，查收并填写 6 位码即可登录。未批准或被拒绝的邮箱不会收到登录码。
+4. 退出会使当前会话失效。每次业务请求仍会检查邮箱是否保持批准状态。
+
+如需撤销已批准邮箱，可在 Cloudflare D1 控制台对 `nanbei-admin-auth` 执行下列 SQL（替换邮箱，并保持小写）：
+
+```sql
+UPDATE auth_users SET status = 'rejected' WHERE email = 'member@example.com';
+DELETE FROM auth_sessions WHERE email = 'member@example.com';
+```
+
+撤权后现有会话无法继续调用后台接口。旧的 `ADMIN_TOKEN` 与浏览器配置请求头不再提供访问权限。
 
 ## 目录结构
 
 ```text
 ├── worker/
-│   ├── index.ts          # 路由、配置校验、业务接口
+│   ├── index.ts          # 路由、会话校验、业务接口
+│   ├── config.ts         # 读取服务端云开发配置
+│   ├── auth.ts           # 邮箱申请、审批、验证码与会话
+│   ├── env.d.ts          # Wrangler 生成的绑定类型
 │   ├── wechat.ts         # 微信云开发 HTTP API 客户端（凭证缓存、数据库、存储）
 │   ├── query.ts          # 数据库语句生成（安全转义）
 │   └── query.test.ts
@@ -119,10 +158,11 @@ npm run deploy        # 构建并发布，配置见 wrangler.jsonc
 │   ├── types.ts          # 与小程序数据模型一致的类型
 │   └── normalize.ts      # 输入校验与文档整理（Worker 与前端共用）
 ├── src/
-│   ├── App.tsx           # 顶栏与路由
-│   ├── pages/            # 设置、作品列表、作品编辑、系列、关于我们
+│   ├── App.tsx           # 登录状态、顶栏与路由
+│   ├── pages/            # 邮箱登录、设置、作品列表、作品编辑、系列、关于我们
 │   ├── preview/          # 小程序页面复刻（手机框、瀑布流、相册、发现、关于）
-│   └── lib/              # 配置存储、API 调用、上传与媒体处理
+│   └── lib/              # 上传偏好、API 调用、上传与媒体处理
+├── migrations/           # D1 认证数据库迁移
 ├── public/icons/         # 来自小程序仓库的线性图标
 └── scripts/mock-wechat.mjs
 ```

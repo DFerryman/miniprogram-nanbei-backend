@@ -1,5 +1,11 @@
-# 复制为 .dev.vars 供 `wrangler dev` 本地使用（.dev.vars 不提交）。
-# 允许把接口地址设为 http://127.0.0.1:8790（scripts/mock-wechat.mjs 模拟服务），线上不要设置。
+# 复制为 .dev.vars，仅供本地开发，不提交。
+# 对接本地模拟微信服务。线上使用 wrangler.jsonc 中的接口与白名单。
 ALLOW_INSECURE_LOCALHOST=1
-# 可选：后台访问口令
-# ADMIN_TOKEN=change-me
+WECHAT_API_BASE=http://127.0.0.1:8790
+ALLOWED_API_HOSTS=127.0.0.1
+WECHAT_APP_SECRET=0123456789abcdef0123456789abcdef
+# 本地专用测试密钥，不可用于线上。
+AUTH_SECRET=local-development-only-please-change-123456789
+APP_ORIGIN=http://localhost:8787
+# 本地 HTTPS 联调可改为对应域名；与 --local-upstream 和浏览器地址保持一致。
+# 邮件绑定在本地不会发送真实邮件；完整发信测试需使用已配置域名的部署环境。

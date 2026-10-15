@@ -15,7 +15,7 @@ interface DataState {
 const Ctx = createContext<DataState | null>(null);
 
 /** 作品与系列列表：进入后台时从当前环境加载一次，编辑后就地更新。 */
-export function DataProvider({ profileId, children }: { profileId: string; children: ReactNode }) {
+export function DataProvider({ sessionKey, children }: { sessionKey: string; children: ReactNode }) {
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [series, setSeries] = useState<Series[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,7 +39,7 @@ export function DataProvider({ profileId, children }: { profileId: string; child
     setPortfolios([]);
     setSeries([]);
     reload();
-  }, [profileId, reload]);
+  }, [sessionKey, reload]);
 
   const upsertPortfolio = useCallback((p: Portfolio) => {
     setPortfolios((list) => (list.some((x) => x._id === p._id) ? list.map((x) => (x._id === p._id ? p : x)) : [p, ...list]));
