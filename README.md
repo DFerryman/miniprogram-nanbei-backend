@@ -79,8 +79,11 @@ Cloudflare Worker（/api/*，worker/index.ts）
 ```bash
 npm install
 npm run build         # 类型检查 + 构建前端到 dist/
-npm test              # Worker 单元测试（语句生成、输入校验）
+npm test              # Worker 单元测试（认证、语句生成、输入校验）
+npm run test:approval-browser # 使用本机 Chromium 验证真实审批表单与 CSRF Cookie
 ```
+
+浏览器审批回归测试默认使用 `/usr/bin/chromium`，可用 `CHROMIUM_PATH` 指定其他 Chromium 可执行文件。测试只使用本地数据库和模拟邮箱，不会发送真实邮件。
 
 本地联调（不连接真实微信环境）：
 

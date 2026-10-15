@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "node --test --experimental-strip-types worker/*.test.ts",
+    "test:approval-browser": "node --experimental-strip-types scripts/test-approval-browser.mjs",
     "deploy": "npm run build && wrangler deploy",
     "mock": "node scripts/mock-wechat.mjs 8790"
   },

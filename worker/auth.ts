@@ -164,11 +164,13 @@ function html(title: string, content: string, headers?: HeadersInit, status = 20
   const result = new Headers(headers);
   result.set('content-type', 'text/html; charset=utf-8');
   result.set('cache-control', 'no-store, max-age=0');
-  result.set('referrer-policy', 'no-referrer');
+  // Native form navigation serializes Origin as "null" under no-referrer.
+  // Send only the origin, retaining CSRF checks without leaking approval tokens.
+  result.set('referrer-policy', 'strict-origin');
   result.set('x-frame-options', 'DENY');
   result.set('x-content-type-options', 'nosniff');
   result.set('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
-  return new Response(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtml(title)}</title><style>body{margin:0;background:#f4f5f2;color:#20251f;font:16px/1.7 system-ui,sans-serif}main{max-width:480px;margin:12vh auto;padding:32px;background:white;border-radius:20px;overflow-wrap:anywhere}h1{font-size:24px}button,a{font:inherit}button{border:0;border-radius:9px;padding:12px 22px;background:#294b38;color:white;cursor:pointer}p{color:#596357}</style></head><body><main><h1>${escapeHtml(title)}</h1>${content}</main></body></html>`, { status, headers: result });
+  return new Response(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="strict-origin"><title>${escapeHtml(title)}</title><style>body{margin:0;background:#f4f5f2;color:#20251f;font:16px/1.7 system-ui,sans-serif}main{max-width:480px;margin:12vh auto;padding:32px;background:white;border-radius:20px;overflow-wrap:anywhere}h1{font-size:24px}button,a{font:inherit}button{border:0;border-radius:9px;padding:12px 22px;background:#294b38;color:white;cursor:pointer}p{color:#596357}</style></head><body><main><h1>${escapeHtml(title)}</h1>${content}</main></body></html>`, { status, headers: result });
 }
 
 async function limitIp(req: Request, env: AuthEnv, store: AuthStore, scope: 'access' | 'otp' | 'verify' | 'review', time: number): Promise<void> {
