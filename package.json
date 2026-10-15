@@ -8,7 +8,7 @@
     "dev:worker": "npm run build && wrangler dev --local-upstream localhost:8787 --upstream-protocol http",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
-    "test": "node --test --experimental-strip-types worker/*.test.ts",
+    "test": "node --test --test-timeout=30000 --experimental-strip-types worker/*.test.ts",
     "test:approval-browser": "node --experimental-strip-types scripts/test-approval-browser.mjs",
     "deploy": "npm run build && wrangler deploy",
     "mock": "node scripts/mock-wechat.mjs 8790"

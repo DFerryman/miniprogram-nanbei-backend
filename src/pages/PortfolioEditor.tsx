@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { applyMerge, diffFields, same, type FieldMerge } from '../../shared/merge.ts';
 import { collectFileIds, ID_PATTERN, newId, portfolioInput } from '../../shared/normalize.ts';
 import type { Cover, MediaItem, Portfolio, PortfolioInput } from '../../shared/types.ts';
-import { api, errorText } from '../lib/api.ts';
+import { api, ApiError, errorText, type ChangeEvent } from '../lib/api.ts';
+import { OthersBanner, useEditState, useOthersOn, usePresenceReport, useRemoteChanges } from '../lib/collab.tsx';
 import { useData } from '../lib/data.tsx';
+import { clearDraft, draftKey, loadDraft, useDraftBackup, type Draft } from '../lib/drafts.ts';
 import { displayUrl, extOf, fileName, knownColors, probe, upload, uniqueBase, uploadMedia, useMediaUrls } from '../lib/media.ts';
 import { navigate } from '../lib/router.ts';
 import { sortPortfolios } from '../preview/model.ts';
 import { AlbumPage, FeedPage, GalleryPage } from '../preview/Pages.tsx';
 import { Phone } from '../preview/Phone.tsx';
+import { MergeDialog, plain, type FieldDef } from './MergeDialog.tsx';
 import { STATUS_TEXT } from './Portfolios.tsx';
 
 const EMPTY: PortfolioInput = {
@@ -23,8 +27,31 @@ const EMPTY: PortfolioInput = {
   status: 'draft',
 };
 
+const KEYS = ['title', 'status', 'location', 'shootDate', 'description', 'seriesId', 'tags', 'weight', 'media', 'cover'] as const;
+
 // 新建作品保存后会切换到编辑地址并重新挂载，用它把提示带过去
 let flash = '';
+
+interface MergeState {
+  theirs: Portfolio;
+  mine: PortfolioInput;
+  fields: FieldMerge[];
+  reason: string;
+}
+
+function timeText(sec: number): string {
+  return new Date(sec * 1000).toLocaleTimeString();
+}
+
+function mediaSummary(value: unknown) {
+  const list = (value as MediaItem[]) || [];
+  if (!list.length) return plain(null);
+  return (
+    <span className="small">
+      {list.length} 个：{list.map((m) => m.src.split('/').pop()).join('、')}
+    </span>
+  );
+}
 
 interface Pending {
   key: string;
@@ -88,9 +115,9 @@ function MediaTile({ m, index, isCover, onMove, onRemove, onCover, onPoster, dra
   );
 }
 
-export function PortfolioEditor({ id: routeId }: { id: string }) {
+export function PortfolioEditor({ id: routeId, me }: { id: string; me: string }) {
   const isNew = routeId === 'new';
-  const { portfolios, series, upsertPortfolio } = useData();
+  const { portfolios, series, upsertPortfolio, removePortfolio, reload } = useData();
   const [id, setId] = useState(() => (isNew ? newId('p') : routeId));
   const [form, setForm] = useState<PortfolioInput>(EMPTY);
   const [saved, setSaved] = useState<Portfolio | null>(null);
@@ -111,6 +138,16 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
   const [dropActive, setDropActive] = useState(false);
   const sessionUploads = useRef(new Set<string>());
   const fileInput = useRef<HTMLInputElement>(null);
+  const [merge, setMerge] = useState<MergeState | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  // 其他窗口保存了此作品、而本页有未保存修改时的提示
+  const [remote, setRemote] = useState<ChangeEvent | null>(null);
+  // 编辑期间作品被删除：保留表单，可以用相同 ID 重新创建
+  const [gone, setGone] = useState<{ email?: string; at?: number } | null>(null);
+  const [recreate, setRecreate] = useState(false);
+  const [missing, setMissing] = useState<string[]>([]);
+  const [draft, setDraft] = useState<Draft<Portfolio, PortfolioInput> | null>(null);
+  const creating = (isNew || recreate) && !saved;
 
   useEffect(() => {
     if (isNew) {
@@ -124,6 +161,9 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
       setForm(portfolioInput(p));
       setId(p._id);
       setLoading(false);
+      // 上次没保存就关闭了页面：提示恢复
+      const d = loadDraft<Portfolio, PortfolioInput>(draftKey(me, 'portfolio', p._id));
+      if (d && !same(portfolioInput(d.form), portfolioInput(p))) setDraft(d);
     };
     setLoading(true);
     // 编辑前总是从云端读取最新数据，避免覆盖他人刚做的修改
@@ -142,6 +182,93 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
     return JSON.stringify(base) !== JSON.stringify(form);
   }, [form, saved]);
 
+  const editState = useEditState(dirty || pending.length > 0);
+  usePresenceReport('portfolio', creating && isNew ? null : id, editState);
+  const others = useOthersOn('portfolio', id);
+  // 恢复提示还没处理时不覆盖本地备份
+  useDraftBackup(saved && !draft ? draftKey(me, 'portfolio', id) : null, dirty, saved, form);
+
+  /**
+   * 进入合并：base 为本页加载（或上次合并）时的版本，theirs 为云端最新版本。
+   * 本页没有修改时直接采用最新版本；否则打开合并界面，修改不会丢失。
+   */
+  function startMerge(theirs: Portfolio, mine: PortfolioInput, reason: string, base: PortfolioInput = saved ? portfolioInput(saved) : EMPTY) {
+    const fields = diffFields(base, mine, portfolioInput(theirs), KEYS);
+    if (!fields.some((f) => f.state === 'mine' || f.state === 'conflict')) {
+      adopt(theirs);
+      setNotice(`${reason}。你没有改动的内容，已直接载入最新版本。`);
+      return;
+    }
+    setMerge({ theirs, mine, fields, reason });
+    setMergeOpen(true);
+  }
+
+  function adopt(theirs: Portfolio) {
+    setSaved(theirs);
+    setForm(portfolioInput(theirs));
+    upsertPortfolio(theirs);
+    setRemote(null);
+    setMerge(null);
+  }
+
+  function applyChoice(choice: Record<string, 'mine' | 'theirs'>) {
+    if (!merge) return;
+    const merged = applyMerge(merge.fields as FieldMerge<(typeof KEYS)[number]>[], merge.mine, portfolioInput(merge.theirs), choice);
+    // 封面必须是作品中仍存在的媒体
+    if (merged.cover && !merged.media.some((m) => imageOf(m) === merged.cover?.src)) merged.cover = null;
+    setSaved(merge.theirs);
+    upsertPortfolio(merge.theirs);
+    setForm(merged);
+    setMerge(null);
+    setRemote(null);
+    setError('');
+    setNotice(`已合并到最新版本（第 ${merge.theirs.rev} 版）。请检查后点「保存」。`);
+  }
+
+  async function reviewLatest(reason: string) {
+    try {
+      const { item } = await api.portfolio(id);
+      startMerge(item, form, reason);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) setGone({});
+      else setError(`读取最新内容失败：${errorText(err)}`);
+    }
+  }
+
+  useRemoteChanges((c) => {
+    if (c.kind !== 'portfolio' || (c.id !== id && c.id !== '*') || !saved) return;
+    if (c.action === 'delete') {
+      setGone({ email: c.email, at: c.at });
+      return;
+    }
+    if (c.rev !== null && c.rev <= saved.rev) return;
+    if (!dirty && !pending.length) {
+      // 没有未保存修改：直接显示最新内容
+      api.portfolio(id).then(({ item }) => {
+        if (item.rev === saved.rev) return;
+        adopt(item);
+        setNotice(c.id === '*' ? '所属系列已被删除，已载入最新内容。' : `${c.email} 在 ${timeText(c.at)} 保存了此作品，已载入最新内容。`);
+      }).catch(() => undefined);
+    } else {
+      setRemote(c);
+    }
+  });
+
+  function removeMissing() {
+    const bad = new Set(missing);
+    setForm((f) => {
+      const media = f.media.filter((m) => !bad.has(m.src)).map((m) => {
+        const next = { ...m };
+        if (next.thumb && bad.has(next.thumb)) delete next.thumb;
+        if (next.poster && bad.has(next.poster)) delete next.poster;
+        return next;
+      });
+      const cover = f.cover && (bad.has(f.cover.src) || !media.some((m) => imageOf(m) === f.cover?.src)) ? null : f.cover;
+      return { ...f, media, cover };
+    });
+    setMissing([]);
+    setError('');
+  }
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
       if (dirty || pending.length) e.preventDefault();
@@ -250,14 +377,19 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
     setSaving(true);
     try {
       const input = portfolioInput(form);
-      const r = isNew && !saved ? await api.createPortfolio(id, input) : await api.updatePortfolio(id, input, cleanup);
+      const r = creating || !saved ? await api.createPortfolio(id, input) : await api.updatePortfolio(id, saved.rev, input, cleanup);
       await dropUnused(input);
       sessionUploads.current.clear();
       setSaved(r.item);
       setForm(portfolioInput(r.item));
       upsertPortfolio(r.item);
-      const cleaned = 'cleaned' in r ? (r as { cleaned: string[] }).cleaned.length : 0;
-      const message = `已保存${cleaned ? `，并清理 ${cleaned} 个不再使用的文件` : ''}。小程序用户下拉刷新或重新进入即可看到。`;
+      setRemote(null);
+      setGone(null);
+      setRecreate(false);
+      setMissing([]);
+      clearDraft(draftKey(me, 'portfolio', id));
+      const queued = 'queued' in r ? (r as { queued: number }).queued : 0;
+      const message = `已保存${queued ? `。${queued} 个移除的文件将在 24 小时后确认无引用再从云存储删除` : ''}。小程序用户下拉刷新或重新进入即可看到。`;
       setNotice(message);
       if (isNew) {
         flash = message;
@@ -265,16 +397,58 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
       }
     } catch (err) {
       setError(`保存失败：${errorText(err)}`);
+      if (!(err instanceof ApiError)) return;
+      if ((err.code === 'CONFLICT' || err.code === 'EXISTS') && err.data?.current) {
+        startMerge(err.data.current as Portfolio, form, err.code === 'EXISTS' ? '相同 ID 的作品刚被其他窗口创建' : '保存前发现其他窗口已保存了新版本');
+      } else if (err.code === 'GONE') {
+        setError('');
+        setGone((g) => g || {});
+      } else if (err.code === 'MISSING_FILES') {
+        setMissing((err.data?.missing as string[]) || []);
+      } else if (err.code === 'SERIES_MISSING') {
+        void reload(true);
+      }
     } finally {
       setSaving(false);
     }
   }
 
+  function startRecreate() {
+    setRecreate(true);
+    setSaved(null);
+    setGone(null);
+    removePortfolio(id);
+    setNotice('将以相同 ID 重新创建此作品。已被删除的文件无法引用，保存时会提示移除。');
+  }
+
+  function restoreDraft() {
+    if (!draft || !saved) return;
+    const mine = portfolioInput(draft.form);
+    if (draft.base && draft.base.rev === saved.rev) setForm(mine);
+    else startMerge(saved, mine, '本地保存的修改基于旧版本', draft.base ? portfolioInput(draft.base) : portfolioInput(saved));
+    setDraft(null);
+  }
+
   async function leave() {
-    if (dirty && !confirm('有未保存的修改，确定离开？')) return;
+    if ((dirty || merge) && !confirm('有未保存的修改，确定离开？')) return;
     await dropUnused(saved ? portfolioInput(saved) : null);
+    clearDraft(draftKey(me, 'portfolio', id));
     navigate('/portfolios');
   }
+
+  const seriesName = (v: unknown) => (v ? series.find((s) => s._id === v)?.title || `${v}（已删除）` : plain(null));
+  const defs: FieldDef[] = [
+    { key: 'title', label: '标题' },
+    { key: 'status', label: '状态', render: (v) => STATUS_TEXT[v as Portfolio['status']] },
+    { key: 'location', label: '拍摄地点' },
+    { key: 'shootDate', label: '拍摄日期' },
+    { key: 'description', label: '作品说明', render: (v) => <span className="pre">{plain(v)}</span> },
+    { key: 'seriesId', label: '系列', render: seriesName },
+    { key: 'tags', label: '标签' },
+    { key: 'weight', label: '排序权重' },
+    { key: 'media', label: '图片与视频', render: mediaSummary },
+    { key: 'cover', label: '封面', render: (v) => (v ? String((v as Cover).src).split('/').pop() : '自动使用第一个媒体') },
+  ];
 
   const seriesTitle = useMemo(() => {
     const s = series.find((x) => x._id === form.seriesId && x.status === 'published');
@@ -312,8 +486,8 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
         <div className="page-head">
           <div>
             <button type="button" className="link" onClick={leave}>← 作品列表</button>
-            <h2>{isNew && !saved ? '新建作品' : form.title || '编辑作品'}</h2>
-            {saved && <p className="muted small">创建于 {new Date(saved.createdAt).toLocaleString()} · 更新于 {new Date(saved.updatedAt).toLocaleString()}</p>}
+            <h2>{creating ? (recreate ? '重新创建作品' : '新建作品') : form.title || '编辑作品'}</h2>
+            {saved && <p className="muted small">创建于 {new Date(saved.createdAt).toLocaleString()} · 更新于 {new Date(saved.updatedAt).toLocaleString()} · 第 {saved.rev} 版</p>}
           </div>
           <div className="actions">
             {dirty && <span className="tag">未保存</span>}
@@ -321,7 +495,51 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
           </div>
         </div>
 
+        {!creating && <OthersBanner others={others} me={me} noun="作品" />}
+        {draft && (
+          <div className="alert warn" role="status">
+            发现 {new Date(draft.at).toLocaleString()} 未保存的本地修改（可能是窗口被关闭或浏览器崩溃）。
+            <div className="inline-buttons">
+              <button type="button" className="btn small" onClick={restoreDraft}>恢复这些修改</button>
+              <button type="button" className="btn small ghost" onClick={() => { clearDraft(draftKey(me, 'portfolio', id)); setDraft(null); }}>丢弃</button>
+            </div>
+          </div>
+        )}
+        {gone && (
+          <div className="alert error" role="alert">
+            此作品已被{gone.email ? ` ${gone.email} ` : ''}删除{gone.at ? `（${timeText(gone.at)}）` : ''}。你在本页的内容仍保留着，尚未保存。
+            <div className="inline-buttons">
+              <button type="button" className="btn small" onClick={startRecreate}>以相同 ID 重新创建</button>
+              <button type="button" className="btn small ghost" onClick={() => navigate('/portfolios')}>返回列表</button>
+            </div>
+          </div>
+        )}
+        {remote && !gone && (
+          <div className="alert warn" role="status">
+            {remote.id === '*' ? '所属系列被删除，作品已更新' : `${remote.email} 在 ${timeText(remote.at)} 保存了此作品${remote.rev ? `（第 ${remote.rev} 版）` : ''}`}。
+            你有未保存的修改，直接保存会提示合并。
+            <div className="inline-buttons">
+              <button type="button" className="btn small" onClick={() => reviewLatest('其他窗口保存了新版本')}>查看最新内容并合并</button>
+            </div>
+          </div>
+        )}
+        {merge && !mergeOpen && (
+          <div className="alert warn">
+            云端有第 {merge.theirs.rev} 版尚未合并，你的修改还没有保存。
+            <div className="inline-buttons">
+              <button type="button" className="btn small" onClick={() => setMergeOpen(true)}>继续合并</button>
+            </div>
+          </div>
+        )}
         {error && <div className="alert error">{error}</div>}
+        {missing.length > 0 && (
+          <div className="alert error">
+            以下 {missing.length} 个文件已不存在：{missing.map((f) => f.split('/').pop()).join('、')}
+            <div className="inline-buttons">
+              <button type="button" className="btn small" onClick={removeMissing}>从表单中移除这些文件</button>
+            </div>
+          </div>
+        )}
         {notice && <div className="alert ok">{notice}</div>}
 
         <form className="form" onSubmit={save}>
@@ -482,7 +700,7 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
           {saved && (
             <label className="check">
               <input type="checkbox" checked={cleanup} onChange={(e) => setCleanup(e.target.checked)} />
-              保存时从云存储删除已移除的媒体文件（仅限 portfolios/{id}/ 目录）
+              从云存储清理已移除的媒体文件（仅限 portfolios/{id}/ 目录；24 小时后确认没有任何内容引用才删除）
             </label>
           )}
           <div className="actions">
@@ -517,6 +735,17 @@ export function PortfolioEditor({ id: routeId }: { id: string }) {
           </Phone>
         )}
       </aside>
+      {merge && mergeOpen && (
+        <MergeDialog
+          title="合并修改"
+          subtitle={<>{merge.reason}。最新为第 {merge.theirs.rev} 版，更新于 {new Date(merge.theirs.updatedAt).toLocaleString()}。</>}
+          fields={merge.fields}
+          defs={defs}
+          onApply={applyChoice}
+          onDiscardMine={() => { adopt(merge.theirs); setError(''); setNotice('已放弃你的修改，显示最新内容。'); }}
+          onCancel={() => setMergeOpen(false)}
+        />
+      )}
     </div>
   );
 }

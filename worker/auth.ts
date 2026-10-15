@@ -319,15 +319,16 @@ async function review(req: Request, env: AuthEnv, origin: string, store: AuthSto
     { 'set-cookie': setCookie(REVIEW_COOKIE, '', 0) });
 }
 
-export async function requireUser(req: Request, env: AuthEnv): Promise<{ email: string }> {
+export async function requireUser(req: Request, env: AuthEnv): Promise<{ email: string; sessionHash: string }> {
   const origin = configuredOrigin(env);
   if (new URL(req.url).origin !== origin) throw new AppError('BAD_ORIGIN', '请使用应用的正式访问地址', 403);
   if (!['GET', 'HEAD'].includes(req.method)) assertOrigin(req, origin);
   const token = cookie(req, SESSION_COOKIE);
   if (!token) throw new AppError('UNAUTHORIZED', '请先登录', 401);
-  const user = await new AuthStore(env.AUTH_DB).session(await sha256(token), now());
+  const sessionHash = await sha256(token);
+  const user = await new AuthStore(env.AUTH_DB).session(sessionHash, now());
   if (!user) throw new AppError('UNAUTHORIZED', '登录已过期或邮箱未获授权，请重新登录', 401);
-  return user;
+  return { email: user.email, sessionHash };
 }
 
 /** Returns null only for paths outside the auth namespace. */

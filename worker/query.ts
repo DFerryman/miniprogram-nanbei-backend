@@ -41,6 +41,23 @@ export function set(value: QueryValue): Raw {
   return new Raw(`db.command.set(${lit(value)})`);
 }
 
+/** 字段原子自增，用于在批量修改时推进文档版本号。 */
+export function inc(n: number): Raw {
+  return new Raw(`db.command.inc(${lit(n)})`);
+}
+
+export function exists(flag: boolean): Raw {
+  return new Raw(`db.command.exists(${lit(flag)})`);
+}
+
+/**
+ * 乐观锁条件：rev 为当前版本号。旧数据没有 rev 字段，视为版本 0；
+ * 新写入的文档版本号从 1 开始，所以 0 与“字段不存在”一一对应。
+ */
+export function revIs(rev: number): QueryValue {
+  return rev > 0 ? rev : exists(false);
+}
+
 export function inList(values: string[]): Raw {
   return new Raw(`db.command.in(${lit(values)})`);
 }
@@ -86,6 +103,10 @@ export function updateById(name: string, id: string, data: Record<string, QueryV
 
 export function updateWhere(name: string, where: QueryValue, data: Record<string, QueryValue>): string {
   return `${collection(name)}.where(${lit(where)}).update(${lit({ data })})`;
+}
+
+export function removeWhere(name: string, where: QueryValue): string {
+  return `${collection(name)}.where(${lit(where)}).remove()`;
 }
 
 export function removeById(name: string, id: string): string {

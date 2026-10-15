@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Portfolio, Status } from '../../shared/types.ts';
-import { api, errorText } from '../lib/api.ts';
+import { api, ApiError, errorText, type EditState } from '../lib/api.ts';
+import { STATE_TEXT, useCollab } from '../lib/collab.tsx';
 import { useData } from '../lib/data.tsx';
 import { displayUrl, useMediaUrls } from '../lib/media.ts';
 import { navigate } from '../lib/router.ts';
@@ -23,7 +24,17 @@ function Thumb({ p }: { p: Portfolio }) {
 }
 
 export function Portfolios() {
-  const { portfolios, series, loading, error, reload, removePortfolio } = useData();
+  const { portfolios, series, loading, error, reload, removePortfolio, upsertPortfolio } = useData();
+  const { presence } = useCollab();
+  // 其他窗口正在查看 / 编辑的作品
+  const busyIds = useMemo(() => {
+    const map = new Map<string, EditState>();
+    (presence?.tabs || []).filter((t) => !t.self && t.online && t.view === 'portfolio' && t.viewId).forEach((t) => {
+      const prev = map.get(t.viewId!);
+      if (!prev || prev === 'viewing') map.set(t.viewId!, t.state);
+    });
+    return map;
+  }, [presence]);
   const [status, setStatus] = useState<'' | Status>('');
   const [seriesId, setSeriesId] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -58,12 +69,22 @@ export function Portfolios() {
     if (!deleting) return;
     setBusy(true);
     try {
-      const r = await api.deletePortfolio(deleting._id, deleteFiles);
+      const r = await api.deletePortfolio(deleting._id, deleting.rev, deleteFiles);
       removePortfolio(deleting._id);
-      setNotice(`已删除「${deleting.title}」${r.cleaned.length ? `，并清理 ${r.cleaned.length} 个云存储文件` : ''}`);
+      setNotice(r.already
+        ? `「${deleting.title}」已被其他窗口删除`
+        : `已删除「${deleting.title}」${r.queued ? `。${r.queued} 个文件将在 24 小时后确认无引用再从云存储删除` : ''}`);
       setDeleting(null);
     } catch (err) {
-      alert(`删除失败：${errorText(err)}`);
+      if (err instanceof ApiError && err.code === 'CONFLICT' && err.data?.current) {
+        // 作品刚被修改过：显示最新内容，请用户再次确认
+        const current = err.data.current as Portfolio;
+        upsertPortfolio(current);
+        setDeleting(current);
+        alert(`「${current.title}」刚被其他窗口修改（第 ${current.rev} 版）。请确认最新内容后再删除。`);
+      } else {
+        alert(`删除失败：${errorText(err)}`);
+      }
     } finally {
       setBusy(false);
     }
@@ -84,7 +105,7 @@ export function Portfolios() {
             </p>
           </div>
           <div className="actions">
-            <button type="button" className="btn ghost" onClick={reload} disabled={loading}>{loading ? '加载中…' : '刷新'}</button>
+            <button type="button" className="btn ghost" onClick={() => reload()} disabled={loading}>{loading ? '加载中…' : '刷新'}</button>
             <button type="button" className="btn" onClick={() => navigate('/portfolios/new')}>+ 新建作品</button>
           </div>
         </div>
@@ -105,7 +126,7 @@ export function Portfolios() {
         </div>
 
         {notice && <div className="alert ok" onClick={() => setNotice('')}>{notice}</div>}
-        {error && <div className="alert error">加载失败：{error} <button type="button" className="link" onClick={reload}>重试</button></div>}
+        {error && <div className="alert error">加载失败：{error} <button type="button" className="link" onClick={() => reload()}>重试</button></div>}
         {!loading && !error && !portfolios.length && (
           <div className="empty">
             <p>当前环境还没有作品。</p>
@@ -129,6 +150,11 @@ export function Portfolios() {
                   {p.seriesId ? seriesTitle.get(p.seriesId) || `系列 ${p.seriesId}` : '未分组'} · {p.media.length} 个媒体 · 权重 {p.weight}
                 </div>
                 <div className="muted small">♡ {formatCount(p.stats.likes)} · ☆ {formatCount(p.stats.favorites)} · ↗ {formatCount(p.stats.shares)}</div>
+                {busyIds.has(p._id) && (
+                  <div className={`busy-chip ${busyIds.get(p._id)}`}>
+                    <span className={`dot ${busyIds.get(p._id)}`} />其他窗口{STATE_TEXT[busyIds.get(p._id)!]}
+                  </div>
+                )}
                 <div className="card-actions">
                   <button type="button" className="btn small" onClick={() => navigate(`/portfolios/${encodeURIComponent(p._id)}`)}>编辑</button>
                   {p.status === 'published' && (
@@ -173,9 +199,12 @@ export function Portfolios() {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>删除作品</h3>
             <p>确定删除「{deleting.title || deleting._id}」？删除后小程序中将无法再访问该作品，用户收藏列表中也不再显示。</p>
+            {busyIds.get(deleting._id) && busyIds.get(deleting._id) !== 'viewing' && (
+              <div className="alert warn">其他窗口正在编辑此作品，删除后对方的修改将无法保存（对方页面会保留内容并提示）。</div>
+            )}
             <label className="check">
               <input type="checkbox" checked={deleteFiles} onChange={(e) => setDeleteFiles(e.target.checked)} />
-              同时删除云存储 portfolios/{deleting._id}/ 目录下该作品引用的图片和视频
+              同时清理云存储 portfolios/{deleting._id}/ 目录下该作品引用的图片和视频（24 小时后确认无引用再删除）
             </label>
             <div className="actions">
               <button type="button" className="btn ghost" disabled={busy} onClick={() => setDeleting(null)}>取消</button>

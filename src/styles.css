@@ -15,6 +15,12 @@
   --error-text: #a3261a;
   --placeholder: #ececea;
   --focus: #3b82f6;
+  --info-bg: #eef3fb;
+  --info-text: #23466e;
+  --state-viewing: #3a9d5d;
+  --state-editing: #d08a00;
+  --state-unsaved: #c0392b;
+  --state-lost: #9a9a9a;
   color-scheme: light;
 }
 
@@ -35,6 +41,12 @@
     --error-bg: #3a1714;
     --error-text: #ffaba1;
     --placeholder: #2a2a2a;
+    --info-bg: #17233a;
+    --info-text: #a9c6ee;
+    --state-viewing: #5cc583;
+    --state-editing: #f0b43c;
+    --state-unsaved: #ff7b6b;
+    --state-lost: #777777;
     color-scheme: dark;
   }
 }
@@ -1049,4 +1061,242 @@ input:disabled {
 
 .seg-control button + button {
   border-left: 1px solid var(--border);
+}
+
+/* ---------- 多人协作：在线状态、冲突合并 ---------- */
+
+.alert.info {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.inline-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.pre {
+  white-space: pre-wrap;
+}
+
+.dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--state-lost);
+  vertical-align: middle;
+}
+
+.dot.viewing { background: var(--state-viewing); }
+.dot.editing { background: var(--state-editing); }
+.dot.unsaved { background: var(--state-unsaved); }
+.dot.idle { background: transparent; border: 1px solid var(--state-lost); }
+
+.presence {
+  position: relative;
+}
+
+.presence-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.presence-btn.offline {
+  color: var(--error-text);
+  border-color: var(--danger);
+}
+
+.presence-badge {
+  margin-left: 4px;
+  padding: 1px 6px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.presence-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 60;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 70vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.presence-panel h4 {
+  margin: 6px 0;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.presence-panel ul {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.presence-panel li {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 5px 0;
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.presence-panel li .dot {
+  margin-top: 5px;
+}
+
+.presence-panel li.lost {
+  opacity: 0.7;
+}
+
+.presence-note {
+  margin: 8px 0 0;
+}
+
+.presence-banner ul {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.presence-banner li {
+  padding: 2px 0;
+}
+
+.busy-chip {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 2px 8px;
+  font-size: 12px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.busy-chip.viewing {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.merge-mask {
+  z-index: 120;
+}
+
+.merge-modal {
+  max-width: 760px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+.merge-table {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.merge-row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.merge-row.conflict {
+  background: linear-gradient(90deg, var(--warn-bg), transparent 60%);
+}
+
+.merge-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 6px;
+}
+
+.merge-value,
+.merge-options {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.merge-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.merge-options label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.merge-options input[type="radio"] {
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  align-self: flex-start;
+}
+
+.merge-options label.on {
+  border-color: var(--accent);
+}
+
+.merge-options details {
+  grid-column: 1 / -1;
+}
+
+.relogin {
+  z-index: 200;
+}
+
+.relogin-box {
+  width: 100%;
+  max-width: 460px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  background: var(--bg);
+}
+
+.relogin-box .auth-page {
+  min-height: 0;
+  height: auto;
+  padding: 16px;
+}
+
+@media (max-width: 640px) {
+  .merge-row,
+  .merge-options {
+    grid-template-columns: 1fr;
+  }
+
+  .presence-btn {
+    font-size: 11px;
+  }
 }

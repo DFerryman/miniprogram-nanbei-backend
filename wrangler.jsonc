@@ -27,6 +27,8 @@
     "database_id": "537a6497-cfda-478b-97e1-e4ae5152600f",
     "migrations_dir": "migrations"
   }],
+  // 每 30 分钟清理回收列表中到期且无引用的云存储文件（见 worker/index.ts 的 purgeTrash）
+  "triggers": { "crons": ["*/30 * * * *"] },
   "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["no-reply@auth.photodesk.win"] }],
   "observability": { "enabled": true, "head_sampling_rate": 1 }
   // Secrets 通过控制台或 wrangler secret put 设置，不写入仓库：

@@ -57,6 +57,11 @@ function int(value: unknown, fallback = 0): number {
   return Number.isFinite(n) ? Math.max(-1e9, Math.min(1e9, n)) : fallback;
 }
 
+export function rev(value: unknown): number {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 1e12) : 0;
+}
+
 function status(value: unknown): Status {
   return STATUSES.includes(value as Status) ? (value as Status) : 'draft';
 }
@@ -145,6 +150,7 @@ export function portfolio(raw: unknown): Portfolio {
   const p = obj(raw);
   return {
     _id: text(p._id, 64),
+    rev: rev(p.rev),
     ...portfolioInput(p),
     stats: stats(p.stats),
     createdAt: toIso(p.createdAt),
@@ -165,7 +171,7 @@ export function seriesInput(raw: unknown): SeriesInput {
 
 export function series(raw: unknown): Series {
   const s = obj(raw);
-  return { _id: text(s._id, 64), ...seriesInput(s), createdAt: toIso(s.createdAt), updatedAt: toIso(s.updatedAt) };
+  return { _id: text(s._id, 64), rev: rev(s.rev), ...seriesInput(s), createdAt: toIso(s.createdAt), updatedAt: toIso(s.updatedAt) };
 }
 
 export function contact(raw: unknown): Contact | null {
@@ -222,6 +228,7 @@ export function studio(raw: unknown): Studio {
     hours: text(s.hours),
     contacts: list(s.contacts, contact, LIMITS.contacts),
     updatedAt: toIso(s.updatedAt) || undefined,
+    rev: rev(s.rev),
   };
 }
 

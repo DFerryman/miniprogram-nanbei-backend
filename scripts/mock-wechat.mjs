@@ -2,13 +2,15 @@
 // 用法：node scripts/mock-wechat.mjs [端口=8790] [种子数据目录，例如小程序仓库的 database/seed]
 // 配合 .dev.vars 中的 ALLOW_INSECURE_LOCALHOST=1，在设置页把接口地址填为 http://127.0.0.1:8790。
 // 数据库语句（如 db.collection("x").where({...}).get()）在沙箱中按真实语法执行，可发现拼接错误。
+// 测试中可 import { startMock } 在随机端口启动，并用 pause() 让某类请求暂停，构造并发交错。
 import { readFileSync, existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 
-const PORT = Number(process.argv[2] || 8790);
-const SEED_DIR = process.argv[3];
+let PORT = 0;
+let quiet = false;
 const COLLECTIONS = ['portfolios', 'series', 'studio', 'users', 'likes'];
 const TOKEN = 'mock_access_token';
 
@@ -24,20 +26,19 @@ function revive(value) {
   return value;
 }
 
-function seed(file, name) {
-  const path = join(SEED_DIR, file);
-  if (!existsSync(path)) return;
-  readFileSync(path, 'utf8').split('\n').filter((l) => l.trim()).forEach((line) => {
-    const doc = revive(JSON.parse(line));
-    store[name].set(doc._id, doc);
-  });
-}
-
-if (SEED_DIR) {
-  seed('portfolios.json', 'portfolios');
-  seed('portfolios-extra.json', 'portfolios');
-  seed('series.json', 'series');
-  seed('studio.json', 'studio');
+function seedAll(dir) {
+  const read = (file, name) => {
+    const path = join(dir, file);
+    if (!existsSync(path)) return;
+    readFileSync(path, 'utf8').split('\n').filter((l) => l.trim()).forEach((line) => {
+      const doc = revive(JSON.parse(line));
+      store[name].set(doc._id, doc);
+    });
+  };
+  read('portfolios.json', 'portfolios');
+  read('portfolios-extra.json', 'portfolios');
+  read('series.json', 'series');
+  read('studio.json', 'studio');
 }
 
 class WxErr extends Error {
@@ -49,17 +50,21 @@ class WxErr extends Error {
 
 const SET = Symbol('set');
 const IN = Symbol('in');
+const EXISTS = Symbol('exists');
+const INC = Symbol('inc');
 
 function matches(doc, where) {
   return Object.entries(where || {}).every(([k, v]) => {
     if (v && v[IN]) return v[IN].includes(doc[k]);
+    if (v && v[EXISTS] !== undefined) return (k in doc && doc[k] !== undefined) === v[EXISTS];
     return doc[k] === v || (v === null && doc[k] == null);
   });
 }
 
 function applyUpdate(doc, data) {
   for (const [k, v] of Object.entries(data)) {
-    if (v && v[SET] !== undefined) doc[k] = structuredClone(v[SET]);
+    if (v && v[INC] !== undefined) doc[k] = (typeof doc[k] === 'number' ? doc[k] : 0) + v[INC];
+    else if (v && v[SET] !== undefined) doc[k] = structuredClone(v[SET]);
     else if (v && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v) && doc[k] && typeof doc[k] === 'object') {
       applyUpdate(doc[k], v); // 与云数据库一致：普通对象按字段合并
     } else doc[k] = v;
@@ -70,6 +75,8 @@ function makeDb() {
   const command = {
     set: (v) => ({ [SET]: v }),
     in: (arr) => ({ [IN]: arr }),
+    exists: (flag) => ({ [EXISTS]: !!flag }),
+    inc: (n) => ({ [INC]: n }),
   };
   function collection(name) {
     const col = store[name];
@@ -113,6 +120,7 @@ function makeDb() {
         return { kind: 'add', ids };
       },
       update({ data }) {
+        if (!q.where) throw new WxErr(-1, 'update without where is not allowed in this mock');
         const docs = list();
         docs.forEach((d) => applyUpdate(d, data));
         return { kind: 'update', matched: docs.length, modified: docs.length };
@@ -195,7 +203,23 @@ const handlers = {
   }),
 };
 
-createServer(async (req, res) => {
+const gates = new Map();
+
+/** 让发往 path 的请求暂停，直到调用返回的 release()。返回对象的 waiting 为已暂停的请求数。 */
+function pause(path) {
+  const gate = { waiting: 0, resolvers: [], open: false };
+  gates.set(path, gate);
+  return {
+    get waiting() { return gate.waiting; },
+    release() {
+      gate.open = true;
+      gates.delete(path);
+      gate.resolvers.splice(0).forEach((r) => r());
+    },
+  };
+}
+
+const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
   const send = (status, obj, headers = {}) => {
     res.writeHead(status, { 'content-type': 'application/json', ...headers });
@@ -230,13 +254,42 @@ createServer(async (req, res) => {
     }
     const handler = handlers[url.pathname];
     if (!handler) return send(404, { errcode: 404, errmsg: 'not found' });
+    const gate = gates.get(url.pathname);
+    if (gate && !gate.open) {
+      gate.waiting += 1;
+      await new Promise((r) => gate.resolvers.push(r));
+    }
     if (url.searchParams.get('access_token') !== TOKEN) return send(200, { errcode: 40001, errmsg: 'invalid credential' });
     if (!b.env) return send(200, { errcode: -501000, errmsg: 'env required' });
     const out = handler(b);
-    console.log(url.pathname, (b.query || b.path || '').slice(0, 160));
+    if (!quiet) console.log(url.pathname, (b.query || b.path || '').slice(0, 160));
     return send(200, { errcode: 0, errmsg: 'ok', ...out });
   } catch (err) {
-    console.error(url.pathname, err.message);
+    if (!quiet) console.error(url.pathname, err.message);
     return send(200, { errcode: err.code ?? -1, errmsg: err.message });
   }
-}).listen(PORT, () => console.log(`mock wechat api on http://127.0.0.1:${PORT}`));
+});
+
+/** 在指定端口（0 为随机端口）启动模拟服务。 */
+export function startMock({ port = 0, seedDir, silent = false } = {}) {
+  quiet = silent;
+  if (seedDir) seedAll(seedDir);
+  return new Promise((resolve) => {
+    server.listen(port, '127.0.0.1', () => {
+      PORT = server.address().port;
+      resolve({
+        port: PORT,
+        base: `http://127.0.0.1:${PORT}`,
+        store,
+        files,
+        pause,
+        close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(() => r()); }),
+      });
+    });
+  });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startMock({ port: Number(process.argv[2] || 8790), seedDir: process.argv[3] })
+    .then(({ base }) => console.log(`mock wechat api on ${base}`));
+}

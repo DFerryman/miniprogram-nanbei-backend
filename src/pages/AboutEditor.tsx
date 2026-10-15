@@ -1,13 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { applyMerge, diffFields, same, type FieldMerge } from '../../shared/merge.ts';
 import { collectFileIds, paragraphs, studio as normalizeStudio } from '../../shared/normalize.ts';
 import { CONTACT_LABELS, CONTACT_TYPES, type Contact, type ContactType, type Studio, type StudioSection } from '../../shared/types.ts';
-import { api, errorText } from '../lib/api.ts';
+import { api, ApiError, errorText, type ChangeEvent } from '../lib/api.ts';
+import { OthersBanner, useEditState, useOthersOn, usePresenceReport, useRemoteChanges } from '../lib/collab.tsx';
+import { clearDraft, draftKey, loadDraft, useDraftBackup, type Draft } from '../lib/drafts.ts';
 import { displayUrl, extOf, fileName, probe, upload, uniqueBase, useMediaUrls } from '../lib/media.ts';
 import { navigate } from '../lib/router.ts';
 import { AboutPage } from '../preview/Pages.tsx';
 import { Phone } from '../preview/Phone.tsx';
+import { MergeDialog, plain, type FieldDef } from './MergeDialog.tsx';
 
 const DIR = 'studio/profile';
+const DRAFT_ID = 'profile';
+
+const FORM_FIELDS: FieldDef[] = [
+  { key: 'name', label: '工作室名称' },
+  { key: 'nameEn', label: '英文名' },
+  { key: 'slogan', label: '标语' },
+  { key: 'cover', label: '封面', render: (v) => (v ? String((v as { src: string }).src).split('/').pop() : plain(null)) },
+  { key: 'intro', label: '介绍', render: (v) => <span className="pre">{plain(v)}</span> },
+  { key: 'sections', label: '附加板块', render: (v) => ((v as { title: string }[]).length ? (v as { title: string }[]).map((x) => x.title || '（无标题）').join('、') : plain(null)) },
+  { key: 'address', label: '地址' },
+  { key: 'hours', label: '营业时间' },
+  { key: 'lat', label: '纬度' },
+  { key: 'lng', label: '经度' },
+  { key: 'locName', label: '地点名称' },
+  { key: 'contacts', label: '联系方式', render: (v) => ((v as Contact[]).length ? (v as Contact[]).map((c) => `${CONTACT_LABELS[c.type]}${c.value ? ` ${c.value}` : ''}`).join('、') : plain(null)) },
+];
+const KEYS = FORM_FIELDS.map((f) => f.key) as (keyof Form & string)[];
 
 interface Form {
   name: string;
@@ -123,7 +144,7 @@ function ImagePicker({ value, onChange, label, onUploaded }: {
   );
 }
 
-export function AboutEditor() {
+export function AboutEditor({ me }: { me: string }) {
   const [form, setForm] = useState<Form>(EMPTY);
   const [saved, setSaved] = useState<Studio | null>(null);
   const [exists, setExists] = useState(false);
@@ -133,6 +154,12 @@ export function AboutEditor() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const sessionUploads = useRef(new Set<string>());
+  const [merge, setMerge] = useState<{ theirs: Studio | null; mine: Form; fields: FieldMerge[]; reason: string } | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [remote, setRemote] = useState<ChangeEvent | null>(null);
+  const [missing, setMissing] = useState<string[]>([]);
+  const [draft, setDraft] = useState<Draft<Studio | null, Form> | null>(null);
+  const key = draftKey(me, 'studio', DRAFT_ID);
 
   const load = () => {
     setLoading(true);
@@ -142,6 +169,8 @@ export function AboutEditor() {
         setSaved(studio);
         setExists(!!studio);
         setForm(toForm(studio));
+        const d = loadDraft<Studio | null, Form>(key);
+        if (d && !same(toStudio(d.form), toStudio(toForm(studio)))) setDraft(d);
       })
       .catch((err) => setLoadError(errorText(err)))
       .finally(() => setLoading(false));
@@ -150,6 +179,69 @@ export function AboutEditor() {
 
   const studio = useMemo(() => toStudio(form), [form]);
   const dirty = useMemo(() => JSON.stringify(toStudio(toForm(saved))) !== JSON.stringify(studio), [saved, studio]);
+  const editState = useEditState(dirty);
+  usePresenceReport('studio', DRAFT_ID, editState);
+  const others = useOthersOn('studio', DRAFT_ID);
+  useDraftBackup(!loading && !draft ? key : null, dirty, saved, form);
+
+  function adopt(theirs: Studio | null) {
+    setSaved(theirs);
+    setExists(!!theirs);
+    setForm(toForm(theirs));
+    setMerge(null);
+    setRemote(null);
+  }
+
+  function startMerge(theirs: Studio | null, mine: Form, reason: string, base: Form = toForm(saved)) {
+    const fields = diffFields(base, mine, toForm(theirs), KEYS);
+    if (!fields.some((f) => f.state === 'mine' || f.state === 'conflict')) {
+      adopt(theirs);
+      setNotice(`${reason}。你没有改动的内容，已直接载入最新版本。`);
+      return;
+    }
+    setMerge({ theirs, mine, fields, reason });
+    setMergeOpen(true);
+  }
+
+  function applyChoice(choice: Record<string, 'mine' | 'theirs'>) {
+    if (!merge) return;
+    const merged = applyMerge(merge.fields as FieldMerge<keyof Form & string>[], merge.mine, toForm(merge.theirs), choice);
+    setSaved(merge.theirs);
+    setExists(!!merge.theirs);
+    setForm(merged);
+    setMerge(null);
+    setRemote(null);
+    setError('');
+    setNotice(`已合并到最新版本（第 ${merge.theirs?.rev ?? 0} 版）。请检查后点「保存」。`);
+  }
+
+  async function reviewLatest() {
+    try {
+      const r = await api.studio();
+      startMerge(r.studio, form, '其他窗口保存了新版本');
+    } catch (err) {
+      setError(`读取最新内容失败：${errorText(err)}`);
+    }
+  }
+
+  useRemoteChanges((c) => {
+    if (c.kind !== 'studio' || (c.rev !== null && c.rev <= (saved?.rev ?? 0))) return;
+    if (!dirty) {
+      api.studio().then((r) => {
+        adopt(r.studio);
+        setNotice(`${c.email} 在 ${new Date(c.at * 1000).toLocaleTimeString()} 保存了关于我们，已载入最新内容。`);
+      }).catch(() => undefined);
+    } else {
+      setRemote(c);
+    }
+  });
+
+  function restoreDraft() {
+    if (!draft) return;
+    if ((draft.base?.rev ?? 0) === (saved?.rev ?? 0)) setForm(draft.form);
+    else startMerge(saved, draft.form, '本地保存的修改基于旧版本', toForm(draft.base));
+    setDraft(null);
+  }
 
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
@@ -186,19 +278,24 @@ export function AboutEditor() {
     }
     setSaving(true);
     try {
-      const before = saved;
-      const r = await api.saveStudio(studio);
-      // 清理被替换掉的、由后台上传到 studio/ 目录的旧图片
+      const r = await api.saveStudio(saved?.rev ?? 0, studio);
+      // 被替换掉的旧图片由服务端基于被覆盖的版本放入回收列表；这里只丢弃本次上传但没有用上的文件
       const now = collectFileIds(r.studio);
-      const stale = [...collectFileIds(before), ...sessionUploads.current].filter((f) => !now.has(f) && f.includes(`/${DIR}/`));
-      if (stale.length) await api.deleteFiles(stale).catch(() => undefined);
+      const unused = [...sessionUploads.current].filter((f) => !now.has(f));
+      if (unused.length) await api.deleteFiles(unused).catch(() => undefined);
       sessionUploads.current.clear();
-      setSaved(r.studio);
-      setExists(true);
-      setForm(toForm(r.studio));
-      setNotice('已保存。小程序「关于」页下拉刷新即可看到最新内容。');
+      clearDraft(key);
+      adopt(r.studio);
+      setNotice(`已保存${r.queued ? `。${r.queued} 张替换掉的图片将在 24 小时后确认无引用再删除` : ''}。小程序「关于」页下拉刷新即可看到最新内容。`);
     } catch (err) {
       setError(`保存失败：${errorText(err)}`);
+      if (err instanceof ApiError && err.code === 'CONFLICT' && err.data?.current) {
+        startMerge(err.data.current as Studio, form, '保存前发现其他窗口已保存了新版本');
+      } else if (err instanceof ApiError && err.code === 'MISSING_FILES') {
+        setMissing((err.data?.missing as string[]) || []);
+      } else if (err instanceof ApiError && err.code === 'GONE') {
+        startMerge(null, form, '工作室信息已被删除');
+      }
     } finally {
       setSaving(false);
     }
@@ -227,7 +324,48 @@ export function AboutEditor() {
             <button type="button" className="btn" disabled={saving} onClick={() => save()}>{saving ? '保存中…' : '保存'}</button>
           </div>
         </div>
+        <OthersBanner others={others} me={me} noun="页面" />
+        {draft && (
+          <div className="alert warn" role="status">
+            发现 {new Date(draft.at).toLocaleString()} 未保存的本地修改（可能是窗口被关闭或浏览器崩溃）。
+            <div className="inline-buttons">
+              <button type="button" className="btn small" onClick={restoreDraft}>恢复这些修改</button>
+              <button type="button" className="btn small ghost" onClick={() => { clearDraft(key); setDraft(null); }}>丢弃</button>
+            </div>
+          </div>
+        )}
+        {remote && (
+          <div className="alert warn" role="status">
+            {remote.email} 在 {new Date(remote.at * 1000).toLocaleTimeString()} 保存了关于我们{remote.rev ? `（第 ${remote.rev} 版）` : ''}。你有未保存的修改，直接保存会提示合并。
+            <div className="inline-buttons">
+              <button type="button" className="btn small" onClick={reviewLatest}>查看最新内容并合并</button>
+            </div>
+          </div>
+        )}
+        {merge && !mergeOpen && (
+          <div className="alert warn">
+            云端有新版本尚未合并，你的修改还没有保存。
+            <div className="inline-buttons"><button type="button" className="btn small" onClick={() => setMergeOpen(true)}>继续合并</button></div>
+          </div>
+        )}
         {error && <div className="alert error">{error}</div>}
+        {missing.length > 0 && (
+          <div className="alert error">
+            以下图片已不存在：{missing.map((f) => f.split('/').pop()).join('、')}
+            <div className="inline-buttons">
+              <button type="button" className="btn small" onClick={() => {
+                const bad = new Set(missing);
+                setForm((f) => ({
+                  ...f,
+                  cover: f.cover && bad.has(f.cover.src) ? null : f.cover,
+                  contacts: f.contacts.map((c) => (bad.has(c.qrcode) ? { ...c, qrcode: '' } : c)),
+                }));
+                setMissing([]);
+                setError('');
+              }}>从表单中移除这些图片</button>
+            </div>
+          </div>
+        )}
         {notice && <div className="alert ok">{notice}</div>}
 
         <form className="form" onSubmit={save}>
@@ -395,6 +533,17 @@ export function AboutEditor() {
           <AboutPage studio={studio} />
         </Phone>
       </aside>
+      {merge && mergeOpen && (
+        <MergeDialog
+          title="合并关于我们的修改"
+          subtitle={<>{merge.reason}。{merge.theirs ? `最新为第 ${merge.theirs.rev ?? 0} 版${merge.theirs.updatedAt ? `，更新于 ${new Date(merge.theirs.updatedAt).toLocaleString()}` : ''}。` : ''}</>}
+          fields={merge.fields}
+          defs={FORM_FIELDS}
+          onApply={applyChoice}
+          onDiscardMine={() => { adopt(merge.theirs); setError(''); setNotice('已放弃你的修改，显示最新内容。'); }}
+          onCancel={() => setMergeOpen(false)}
+        />
+      )}
     </div>
   );
 }

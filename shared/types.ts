@@ -43,6 +43,8 @@ export interface PortfolioInput {
 
 export interface Portfolio extends PortfolioInput {
   _id: string;
+  /** 文档版本号，每次后台写入加 1；旧数据没有该字段时为 0。用于检测并发修改。 */
+  rev: number;
   stats: Stats;
   createdAt: string; // ISO
   updatedAt: string;
@@ -58,6 +60,7 @@ export interface SeriesInput {
 
 export interface Series extends SeriesInput {
   _id: string;
+  rev: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -111,6 +114,8 @@ export interface Studio {
   hours: string;
   contacts: Contact[];
   updatedAt?: string;
+  /** 文档版本号；尚未创建时为 0。 */
+  rev?: number;
 }
 
 /** 仅供 Worker 内部使用的连接配置，凭据从服务端环境变量读取。 */
