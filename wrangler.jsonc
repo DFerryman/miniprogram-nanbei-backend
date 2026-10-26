@@ -24,10 +24,13 @@
   "d1_databases": [{
     "binding": "AUTH_DB",
     "database_name": "nanbei-admin-auth",
-    "database_id": "537a6497-cfda-478b-97e1-e4ae5152600f",
+    // Sanchai 账户中的数据库（APAC）。旧账户的 537a6497-… 已于 2026-10-26 迁移后删除。
+    "database_id": "460fea35-3925-4656-8cc9-72690a4c0dbc",
     "migrations_dir": "migrations"
   }],
   // 每 30 分钟清理回收列表中到期且无引用的云存储文件（见 worker/index.ts 的 purgeTrash）
+  // 注意：purgeTrash 会真实删除云开发存储中的文件。此定时任务只能在一个 Cloudflare 账户中运行
+  // （目前为 Sanchai）；切勿把本 Worker 部署到其他账户，否则两处会同时清理同一批文件。
   "triggers": { "crons": ["*/30 * * * *"] },
   "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["no-reply@auth.photodesk.win"] }],
   "observability": { "enabled": true, "head_sampling_rate": 1 }
