@@ -126,7 +126,7 @@ npm run dev:worker  # http://localhost:8787
 
 ## 部署到 Cloudflare Workers
 
-项目部署于 <https://photodesk.win>，Worker 名称为 `nanbei-admin`，位于 Cloudflare 账户 **Sanchai**（2026-10-26 从旧账户迁移，D1 `nanbei-admin-auth` 位于 APAC）。若登录的 Cloudflare 账号可访问多个账户，部署前请设置 `CLOUDFLARE_ACCOUNT_ID` 为 Sanchai 的账户 ID，避免部署到其他账户（定时清理任务只能在一个账户中运行，见 `wrangler.jsonc`）。
+项目部署于 <https://photodesk.win>，Worker 名称为 `nanbei-admin`，位于 Cloudflare 账户 **Sanchai**（2026-10-26 从旧账户迁移，D1 `nanbei-admin-auth` 位于 APAC）。`wrangler.jsonc` 中的 `account_id` 已固定为 Sanchai 账户，部署只会进入该账户（优先于 `CLOUDFLARE_ACCOUNT_ID` 环境变量）；部署所用的登录或 API Token 必须有 Sanchai 账户的权限。定时清理任务只能在一个账户中运行，见 `wrangler.jsonc`。
 
 ```bash
 # 配置你自己的小程序 AppSecret（交互输入，不要写进仓库）：

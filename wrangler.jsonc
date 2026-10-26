@@ -1,6 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "nanbei-admin",
+  // 固定部署到 Cloudflare 账户 Sanchai，防止误部署到其他账户（定时任务只能在一个账户中运行）
+  "account_id": "a659b71fbdcc5e9023f24bd247b76933",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
